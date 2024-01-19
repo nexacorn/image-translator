@@ -24,3 +24,4 @@ refiner:
   px_budget: 1800000 # pixels budget. Any image will be resized to satisfy height*width <= px_budget
 
 font: ./font/NotoSerifCJKsc-VF.ttf
+lang: ko
