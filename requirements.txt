@@ -33,4 +33,4 @@ Pillow==9.5.0
 pyyaml
 scikit-learn
 chardet
-translate
+lama-cleaner
