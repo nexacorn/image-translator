@@ -271,23 +271,12 @@ def align_text_boxes(boxes, input_image, center_eps=80, x_eps=20):
         x_coords = np.array([center[0] for center in cluster_centers])
         x_clustering = DBSCAN(eps=x_eps, min_samples=1, n_jobs=-1).fit(x_coords.reshape(-1, 1))
         x_labels = x_clustering.labels_
-        color = (
-            random.randint(0, 255),
-            random.randint(0, 255),
-            random.randint(0, 255),
-            80,
-        )
 
         # 각 x 클러스터에 대한 평균 x 좌표 계산 및 박스 x 좌표 재설정
         for x_label in set(x_labels):
             x_cluster_boxes = [
                 box for box, x_l in zip(cluster_boxes, x_labels) if x_l == x_label
             ]
-
-            for box in x_cluster_boxes:
-                x, y, w, h, _, _, _ = box
-
-                draw.rectangle([x, y, x + w, y + h], outline=color, fill=color)
 
             avg_center_x = np.mean(
                 [
@@ -304,11 +293,6 @@ def align_text_boxes(boxes, input_image, center_eps=80, x_eps=20):
                     for x, y, w, h, text, sim, _ in x_cluster_boxes
                 ]
             )
-
-    file_name = os.path.basename(input_image)
-    base_name = os.path.splitext(file_name)[0]
-    image.save(f"./{base_name}_clustering.png")
-
     return new_boxes
 
 
@@ -539,7 +523,7 @@ def image_translate(predict_config):
             inpainted_result = Image.fromarray(inpainted_result)
 
             ocr_result = []
-            boxes = cluster_boxes_by_text_height(boxes, 30)
+            boxes = cluster_boxes_by_text_height(boxes, 40)
             boxes = cluster_boxes_by_text_y(boxes, 10)
             boxes = align_text_boxes(boxes, input_image)
             for box in boxes:
