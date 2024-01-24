@@ -85,7 +85,7 @@ def load_model(name, device):
 
 def is_similar_color(color1, color2, threshold=0):
     """Check if two colors are similar within a threshold."""
-    print(color1, color2)
+    # print(color1, color2)
     return np.all(np.abs(color1 - color2) <= threshold)
 
 
@@ -146,20 +146,18 @@ def expand_bbox(image, bbox, max_expand=5):
 
     return last_valid_bbox
 
-
 def calculate_center(box):
     # box format: [x, y, w, h]
     center_x = box[0] + box[2] / 2
     center_y = box[1] + box[3] / 2
     return np.array([center_x, center_y])
 
-
-def cluster_boxes(boxes, eps):
-    # Calculate centers
-    centers = np.array([calculate_center(box) for box in boxes])
+def cluster_boxes_by_text_height(boxes, eps):
+    # Extract text heights
+    text_heights = np.array([box[3] for box in boxes]).reshape(-1, 1)
 
     # Apply DBSCAN clustering
-    clustering = DBSCAN(eps=eps, min_samples=1).fit(centers)
+    clustering = DBSCAN(eps=eps, min_samples=1, n_jobs=-1).fit(text_heights)
     labels = clustering.labels_
 
     # Group boxes by cluster
@@ -170,7 +168,148 @@ def cluster_boxes(boxes, eps):
         else:
             clusters[label] = [i]
 
-    return list(clusters.values())
+    for cluster in list(clusters.values()):
+        cluster_text_heights = [boxes[i][3] for i in cluster]
+        min_height = min(cluster_text_heights)
+
+        for i in cluster:
+            boxes[i][3] = min_height  # Update the height of the box to the mean height
+    return boxes
+
+
+def cluster_boxes_by_text_y(boxes, eps):
+    # Extract text y coordinates
+    text_y_coords = np.array([box[1] for box in boxes]).reshape(-1, 1)
+
+    # Apply DBSCAN clustering
+    clustering = DBSCAN(eps=eps, min_samples=1, n_jobs=-1).fit(text_y_coords)
+    labels = clustering.labels_
+
+    # Group boxes by cluster
+    clusters = {}
+    for i, label in enumerate(labels):
+        if label in clusters:
+            clusters[label].append(i)
+        else:
+            clusters[label] = [i]
+
+    for cluster in list(clusters.values()):
+        cluster_centers = [calculate_center(boxes[i]) for i in cluster]
+        mean_center = np.mean(cluster_centers, axis=0)
+
+        mean_y = int(mean_center[1]) - int(boxes[cluster[0]][3] / 2)
+
+        for i in cluster:
+            boxes[i][1] = mean_y
+
+    return boxes
+
+# RGB 각각의 값 범위를 [0, 255]로 정규화하는 함수
+def normalize_color(color):
+    return [component / 255.0 for component in color]
+
+
+# RGB 색상 간의 유사성을 측정하는 함수 (Euclidean distance)
+def color_similarity(color1, color2):
+    normalized_color1 = normalize_color(color1)
+    normalized_color2 = normalize_color(color2)
+    return np.linalg.norm(np.array(normalized_color1) - np.array(normalized_color2))
+
+
+def cluster_colors(data, eps):
+    # 입력 데이터에서 font_color를 추출
+    colors = [item[6] for item in data]
+
+    # RGB 색상 간의 유사성을 기반으로 DBSCAN 클러스터링 수행
+    clustering = DBSCAN(eps=eps, min_samples=1, metric=color_similarity, n_jobs=-1).fit(colors)
+    labels = clustering.labels_
+
+    # 각 클러스터에서 가장 진한 색상 선택
+    clusters = {}
+    for i, label in enumerate(labels):
+        if label in clusters:
+            clusters[label].append(i)
+        else:
+            clusters[label] = [i]
+
+    dominant_colors = []
+    for cluster in clusters.values():
+        cluster_colors = [colors[i] for i in cluster]
+        # 가장 진한 색상 선택 (RGB 값의 합이 가장 큰 것)
+        color_mean = np.mean(cluster_colors)
+        if color_mean <= 125.0:
+            dominant_color = min(cluster_colors, key=lambda color: sum(color))
+        else:
+            dominant_color = max(cluster_colors, key=lambda color: sum(color))
+        dominant_colors.append(dominant_color)
+
+    # 입력 데이터의 font_color를 클러스터링 결과로 대체
+    for i, item in enumerate(data):
+        item[6] = dominant_colors[labels[i]]
+
+    return data
+
+
+def align_text_boxes(boxes, input_image, center_eps=80, x_eps=20):
+    image = Image.open(input_image)
+    draw = ImageDraw.Draw(image, "RGBA")
+
+    # 1단계: 센터 좌표 계산
+    centers = np.array([(x + w / 2, y + h / 2) for x, y, w, h, text, sim, _ in boxes])
+
+    # 2단계: DBSCAN을 사용하여 센터 기반 클러스터링
+    clustering = DBSCAN(eps=center_eps, min_samples=1, n_jobs=-1).fit(centers)
+    labels = clustering.labels_
+
+    # 3단계: 각 섹션(클러스터) 내에서 x 좌표에 대한 클러스터링
+    new_boxes = []
+    for label in set(labels):
+        cluster_boxes = [box for box, l in zip(boxes, labels) if l == label]
+        cluster_centers = [center for center, l in zip(centers, labels) if l == label]
+
+        # 섹션 내의 x 좌표에 대한 클러스터링
+        x_coords = np.array([center[0] for center in cluster_centers])
+        x_clustering = DBSCAN(eps=x_eps, min_samples=1, n_jobs=-1).fit(x_coords.reshape(-1, 1))
+        x_labels = x_clustering.labels_
+        color = (
+            random.randint(0, 255),
+            random.randint(0, 255),
+            random.randint(0, 255),
+            80,
+        )
+
+        # 각 x 클러스터에 대한 평균 x 좌표 계산 및 박스 x 좌표 재설정
+        for x_label in set(x_labels):
+            x_cluster_boxes = [
+                box for box, x_l in zip(cluster_boxes, x_labels) if x_l == x_label
+            ]
+
+            for box in x_cluster_boxes:
+                x, y, w, h, _, _, _ = box
+
+                draw.rectangle([x, y, x + w, y + h], outline=color, fill=color)
+
+            avg_center_x = np.mean(
+                [
+                    center[0]
+                    for center, x_l in zip(cluster_centers, x_labels)
+                    if x_l == x_label
+                ]
+            )
+
+            # 갱신된 x 좌표로 boxes 재구성
+            new_boxes.extend(
+                [
+                    (int(avg_center_x - w / 2), y, w, h, text, sim, _)
+                    for x, y, w, h, text, sim, _ in x_cluster_boxes
+                ]
+            )
+
+    file_name = os.path.basename(input_image)
+    base_name = os.path.splitext(file_name)[0]
+    image.save(f"./{base_name}_clustering.png")
+
+    return new_boxes
 
 
 def contains_english(s):
@@ -400,6 +539,9 @@ def image_translate(predict_config):
             inpainted_result = Image.fromarray(inpainted_result)
 
             ocr_result = []
+            boxes = cluster_boxes_by_text_height(boxes, 30)
+            boxes = cluster_boxes_by_text_y(boxes, 10)
+            boxes = align_text_boxes(boxes, input_image)
             for box in boxes:
                 ocr_result.append([box])
 
@@ -447,10 +589,15 @@ def image_translate(predict_config):
 
             for r in final_result:
                 x1, y1, w, h, text_ko, translated_text = r
-                # print(x1, y1, w, h, text_en)
                 border_color = extract_border_colors(input_image, (x1, y1, w, h))
-                bbox_colors = extract_bbox_colors(input_image,(x1,y1,w,h))
+                bbox_colors = extract_bbox_colors(input_image, (x1, y1, w, h))
                 font_color = find_most_different_color(border_color, bbox_colors)
+                r.append(font_color)
+                
+            final_result = cluster_colors(final_result, 0.3)
+
+            for r in final_result:
+                x1, y1, w, h, original_text, translated_text, font_color = r
                 wrapped_text = [translated_text]
 
                 font_size = 17
