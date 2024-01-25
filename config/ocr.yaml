@@ -25,3 +25,5 @@ refiner:
 
 font: ./font/NotoSerifCJKsc-VF.ttf
 lang: ko
+
+cpu_cores: 2
