@@ -19,6 +19,13 @@ from openai import OpenAI
 import re
 import random
 from sklearn.cluster import KMeans
+import multiprocessing as mp
+from multiprocessing import Pool
+import time
+
+
+# 시작 방법을 'spawn'으로 설정
+mp.set_start_method("spawn", force=True)
 
 
 from lama_cleaner.model_manager import ModelManager
@@ -111,7 +118,7 @@ def expand_bbox(image, bbox, max_expand=5):
     # print('new box')
     for expand in range(1, max_expand + 1):
         # Check bounds and update last valid bbox if within bounds
-        
+
         # print(expand)
         if (
             x1 - expand < 0
@@ -146,11 +153,13 @@ def expand_bbox(image, bbox, max_expand=5):
 
     return last_valid_bbox
 
+
 def calculate_center(box):
     # box format: [x, y, w, h]
     center_x = box[0] + box[2] / 2
     center_y = box[1] + box[3] / 2
     return np.array([center_x, center_y])
+
 
 def cluster_boxes_by_text_height(boxes, eps):
     # Extract text heights
@@ -204,6 +213,7 @@ def cluster_boxes_by_text_y(boxes, eps):
 
     return boxes
 
+
 # RGB 각각의 값 범위를 [0, 255]로 정규화하는 함수
 def normalize_color(color):
     return [component / 255.0 for component in color]
@@ -221,7 +231,9 @@ def cluster_colors(data, eps):
     colors = [item[6] for item in data]
 
     # RGB 색상 간의 유사성을 기반으로 DBSCAN 클러스터링 수행
-    clustering = DBSCAN(eps=eps, min_samples=1, metric=color_similarity, n_jobs=-1).fit(colors)
+    clustering = DBSCAN(eps=eps, min_samples=1, metric=color_similarity, n_jobs=-1).fit(
+        colors
+    )
     labels = clustering.labels_
 
     # 각 클러스터에서 가장 진한 색상 선택
@@ -269,7 +281,9 @@ def align_text_boxes(boxes, input_image, center_eps=80, x_eps=20):
 
         # 섹션 내의 x 좌표에 대한 클러스터링
         x_coords = np.array([center[0] for center in cluster_centers])
-        x_clustering = DBSCAN(eps=x_eps, min_samples=1, n_jobs=-1).fit(x_coords.reshape(-1, 1))
+        x_clustering = DBSCAN(eps=x_eps, min_samples=1, n_jobs=-1).fit(
+            x_coords.reshape(-1, 1)
+        )
         x_labels = x_clustering.labels_
 
         # 각 x 클러스터에 대한 평균 x 좌표 계산 및 박스 x 좌표 재설정
@@ -337,12 +351,14 @@ def translate_llm(original_text_len, orginal_text, lang="ko"):
         )
         return completion
 
+
 def adjust_bbox(image_shape, bbox):
     h, w = image_shape[:2]
     x1, y1, bw, bh = bbox
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(w, x1 + bw), min(h, y1 + bh)
     return x1, y1, x2, y2
+
 
 def extract_border_colors(image_path, bbox, expansion=1, n_clusters=1):
     # 이미지 로드
@@ -351,13 +367,13 @@ def extract_border_colors(image_path, bbox, expansion=1, n_clusters=1):
 
     x1, y1, x2, y2 = adjust_bbox(image.shape, bbox)
     x1, y1, x2, y2 = x1 - expansion, y1 - expansion, x2 + expansion, y2 + expansion
-    x1, y1, x2, y2 = adjust_bbox(image.shape, (x1, y1, x2-x1, y2-y1))
+    x1, y1, x2, y2 = adjust_bbox(image.shape, (x1, y1, x2 - x1, y2 - y1))
 
     # 경계선 색상 추출
-    top_border = image[y1, x1:x2+1]
-    bottom_border = image[y2, x1:x2+1]
-    left_border = image[y1:y2+1, x1]
-    right_border = image[y1:y2+1, x2]
+    top_border = image[y1, x1 : x2 + 1]
+    bottom_border = image[y2, x1 : x2 + 1]
+    left_border = image[y1 : y2 + 1, x1]
+    right_border = image[y1 : y2 + 1, x2]
 
     border_colors = np.vstack((top_border, bottom_border, left_border, right_border))
 
@@ -365,6 +381,7 @@ def extract_border_colors(image_path, bbox, expansion=1, n_clusters=1):
     kmeans = KMeans(n_clusters=n_clusters)
     kmeans.fit(border_colors)
     return kmeans.cluster_centers_
+
 
 def extract_bbox_colors(image_path, bbox, n_clusters=2):
     # 이미지 로드
@@ -374,12 +391,13 @@ def extract_bbox_colors(image_path, bbox, n_clusters=2):
     x1, y1, x2, y2 = adjust_bbox(image.shape, bbox)
 
     # 바운딩 박스 내부 픽셀 추출
-    bbox_pixels = image[y1:y2+1, x1:x2+1].reshape(-1, 3)
+    bbox_pixels = image[y1 : y2 + 1, x1 : x2 + 1].reshape(-1, 3)
 
     # K-means 클러스터링
     kmeans = KMeans(n_clusters=n_clusters)
     kmeans.fit(bbox_pixels)
     return kmeans.cluster_centers_
+
 
 def find_most_different_color(border_color, bbox_colors):
     max_distance = 0
@@ -394,247 +412,283 @@ def find_most_different_color(border_color, bbox_colors):
     return tuple(most_different_color.astype(int))
 
 
+def process_image(input_image, predict_config, key, ocr_lang, model, ocr):
+    img = Image.open(input_image)
+    img_path = input_image
+
+    result = ocr.ocr(img_path, cls=False)
+
+    if not result or result == [None]:
+        cur_outdir = os.path.join(predict_config.outdir, key)
+        if not os.path.exists(cur_outdir):
+            os.makedirs(cur_outdir)
+
+        file_name = os.path.basename(input_image)
+        base_name = os.path.splitext(file_name)[0]
+        img.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
+        return
+
+    font = predict_config.font
+
+    boxes = [line[0] for line in result[0]]
+
+    # OCR 결과 이미지 저장
+    # txts = [line[1][0] for line in result[0]]
+    # scores = [line[1][1] for line in result[0]]
+    # result_np = draw_ocr(img, boxes, txts, scores, font_path=font)
+    # result_img = Image.fromarray(result_np)
+
+    # file_name = os.path.basename(input_image)
+    # base_name = os.path.splitext(file_name)[0]
+    # result_img.save(
+    #     os.path.join(predict_config.ocr_outdir, f"{base_name}_ocr.png")
+    # )
+
+    boxes = []
+
+    for i, r in enumerate(result[0]):
+        if not contains_english(result[0][i][1][0]):
+            x1, y1 = r[0][0]
+            x2, y2 = r[0][2]
+            w, h = x2 - x1, y2 - y1
+
+            text, conf = r[1]
+
+            boxes.append([int(x1), int(y1), int(w), int(h), text, conf, i])
+
+    if not boxes or len(boxes) < 1:
+        cur_outdir = os.path.join(predict_config.outdir, key)
+        if not os.path.exists(cur_outdir):
+            os.makedirs(cur_outdir)
+
+        file_name = os.path.basename(input_image)
+        base_name = os.path.splitext(file_name)[0]
+        img.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
+        return
+
+    # 원본 이미지 크기로 검은색 마스크 이미지 생성
+    mask_img = Image.new("RGB", img.size, "black")
+    mask_draw = ImageDraw.Draw(mask_img)
+
+    # 각 박스 위치에 하얀색 사각형 그리기
+    mp = 2
+    width, height = mask_img.size
+    for box in boxes:
+        x1, y1, w, h, _, _, _ = box
+        x2 = x1 + w
+        y2 = y1 + h
+        x1 = max(x1 - mp, 0)
+        y1 = max(y1 - mp, 0)
+        x2 = min(x2 + mp, width)
+        y2 = min(y2 + mp, height)
+        expanded_bbox = expand_bbox(mask_img, (x1, y1, x2, y2))
+        # expanded_bbox = (x1,y1,x2,y2)
+        mask_draw.rectangle(expanded_bbox, fill="white")
+
+    # 마스크 이미지 저장
+    # file_name = os.path.basename(input_image)
+    # base_name = os.path.splitext(file_name)[0]
+
+    # img.save(os.path.join(predict_config.ocr_outdir, f"{base_name}.png"))
+    # mask_img.save(
+    #     os.path.join(predict_config.ocr_outdir, f"{base_name}_mask.png")
+    # )
+
+    lama_model = model
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    byte_im = buf.getvalue()
+
+    img, alpha_channel, exif_infos = load_img(byte_im, return_exif=True)
+
+    buf.flush()
+    buf.seek(0)
+    mask_img.save(buf, format="PNG")
+    byte_mask = buf.getvalue()
+
+    mask_img, _ = load_img(byte_mask, gray=True)
+
+    mask_img = cv2.threshold(mask_img, 127, 255, cv2.THRESH_BINARY)[1]
+
+    config.sd_seed = random.randint(1, 999999999)
+    config.paint_by_example_seed = random.randint(1, 999999999)
+
+    interpolation = cv2.INTER_CUBIC
+    size_limit = max(img.shape)
+
+    img = resize_max_size(img, size_limit=size_limit, interpolation=interpolation)
+    mask_img = resize_max_size(
+        mask_img, size_limit=size_limit, interpolation=interpolation
+    )
+
+    inpainted_result = lama_model(img, mask_img, config)
+    inpainted_result = cv2.cvtColor(
+        inpainted_result.astype(np.uint8), cv2.COLOR_BGR2RGB
+    )
+    if alpha_channel is not None:
+        if alpha_channel.shape[:2] != inpainted_result.shape[:2]:
+            alpha_channel = cv2.resize(
+                alpha_channel,
+                dsize=(inpainted_result.shape[1], inpainted_result.shape[0]),
+            )
+        inpainted_result = np.concatenate(
+            (inpainted_result, alpha_channel[:, :, np.newaxis]), axis=-1
+        )
+    inpainted_result = Image.fromarray(inpainted_result)
+
+    ocr_result = []
+    print(boxes)
+    boxes = cluster_boxes_by_text_height(boxes, 40)
+    boxes = cluster_boxes_by_text_y(boxes, 10)
+    boxes = align_text_boxes(boxes, input_image)
+    for box in boxes:
+        ocr_result.append([box])
+
+    final_result = []
+
+    for sub_result in ocr_result:
+        x1 = sub_result[0][0]
+        y1 = sub_result[0][1]
+        x2 = sub_result[-1][0] + sub_result[-1][2]
+        y2 = sub_result[-1][1] + sub_result[-1][3]
+
+        w, h = x2 - x1, y2 - y1
+
+        text = ""
+
+        for r in sub_result:
+            text += r[4] + " "
+
+        text = text.strip()
+
+        final_result.append([x1, y1, w, h, text])
+
+    original_texts = [item[4] for item in final_result]
+    original_texts_string = json.dumps(
+        [item[4].replace("，", "").strip() for item in final_result],
+        ensure_ascii=False,
+    )
+
+    completion = translate_llm(
+        len(original_texts), original_texts_string, predict_config.lang
+    )
+
+    result = json.loads(completion.choices[0].message.content)
+    translated = next(iter(result.values()))
+
+    if len(original_texts) != len(translated):
+        print("ERROR : length error")
+        return
+
+    for i, r in enumerate(final_result):
+        final_result[i].append(translated[i].upper())
+
+    translated_result = inpainted_result.copy()
+    draw = ImageDraw.Draw(translated_result)
+
+    for r in final_result:
+        x1, y1, w, h, text_ko, translated_text = r
+        border_color = extract_border_colors(input_image, (x1, y1, w, h))
+        bbox_colors = extract_bbox_colors(input_image, (x1, y1, w, h))
+        font_color = find_most_different_color(border_color, bbox_colors)
+        r.append(font_color)
+
+    final_result = cluster_colors(final_result, 0.3)
+
+    for r in final_result:
+        x1, y1, w, h, original_text, translated_text, font_color = r
+        wrapped_text = [translated_text]
+
+        font_size = 17
+        font_ = ImageFont.truetype(font, font_size)
+        ascent, descent = font_.getmetrics()
+        (width, height), (offset_x, offset_y) = font_.font.getsize(translated_text)
+
+        while width < w and (ascent - offset_y) < h:
+            font_size += 1
+            font_ = ImageFont.truetype(font, font_size)
+            ascent, descent = font_.getmetrics()
+            (width, height), (offset_x, offset_y) = font_.font.getsize(translated_text)
+        font_size -= 1
+        font_ = ImageFont.truetype(font, font_size)
+        line_height = font_.getsize("hg")[1] * 1.5
+
+        # 각 텍스트 줄에 대해
+        for line in wrapped_text:
+            # 텍스트 줄의 너비 계산
+            text_width, _ = font_.getsize(line)
+
+            text_x = x1 + (w - text_width) / 2
+            if text_x <= 0:
+                text_x = 0
+            text_position = (text_x, y1)
+
+            draw.text(text_position, line, fill=font_color, font=font_)
+            y1 += line_height
+
+    cur_outdir = os.path.join(predict_config.outdir, key)
+    if not os.path.exists(cur_outdir):
+        os.makedirs(cur_outdir)
+
+    file_name = os.path.basename(input_image)
+    base_name = os.path.splitext(file_name)[0]
+    inpainted_result.save(os.path.join(cur_outdir, f"{base_name}_inpainted.png"))
+    translated_result.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
+
+
+# 모델 로딩 및 초기화 함수
+def load_models():
+    model = load_model("lama", "cuda")
+    ocr = PaddleOCR(lang=ocr_lang, show_log=False, use_gpu=True, ocr_version="PP-OCRv3")
+    return model, ocr
+
+
+# 이미지 처리 함수
+def process_image_wrapper(args):
+    input_image, predict_config, key, ocr_lang = args
+    model, ocr = load_models()
+    process_image(input_image, predict_config, key, ocr_lang, model, ocr)
+
+
 def image_translate(predict_config):
     key_folders = [f.path for f in os.scandir(predict_config.indir) if f.is_dir()]
+
     for key_folder in key_folders:
         key = os.path.basename(key_folder)
         images = []
         for ext in image_extensions:
             images.extend(glob.glob(os.path.join(key_folder, f"*.{ext}")))
 
-        for input_image in tqdm.tqdm(images):
-            img = Image.open(input_image)
-            ocr = PaddleOCR(
-                lang=ocr_lang, show_log=False, use_gpu=True, ocr_version="PP-OCRv3"
-            )
-            img_path = input_image
+        # 멀티프로세싱을 위한 인자 리스트 생성
+        args_list = [
+            (input_image, predict_config, key, ocr_lang) for input_image in images
+        ]
 
-            result = ocr.ocr(img_path, cls=False)
+        # 멀티프로세싱 풀 생성 및 실행
+        cpu_count = os.cpu_count()
 
-            if not result or result == [None]:
-                cur_outdir = os.path.join(predict_config.outdir, key)
-                if not os.path.exists(cur_outdir):
-                    os.makedirs(cur_outdir)
+        NUMBER_OF_PROCESSES = predict_config.cpu_cores
 
-                file_name = os.path.basename(input_image)
-                base_name = os.path.splitext(file_name)[0]
-                img.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
-                continue
-
-            font = predict_config.font
-
-            boxes = [line[0] for line in result[0]]
-
-            # OCR 결과 이미지 저장
-            # txts = [line[1][0] for line in result[0]]
-            # scores = [line[1][1] for line in result[0]]
-            # result_np = draw_ocr(img, boxes, txts, scores, font_path=font)
-            # result_img = Image.fromarray(result_np)
-
-            # file_name = os.path.basename(input_image)
-            # base_name = os.path.splitext(file_name)[0]
-            # result_img.save(
-            #     os.path.join(predict_config.ocr_outdir, f"{base_name}_ocr.png")
-            # )
-
-            boxes = []
-
-            for i, r in enumerate(result[0]):
-                if not contains_english(result[0][i][1][0]):
-                    x1, y1 = r[0][0]
-                    x2, y2 = r[0][2]
-                    w, h = x2 - x1, y2 - y1
-
-                    text, conf = r[1]
-
-                    boxes.append([int(x1), int(y1), int(w), int(h), text, conf, i])
-
-            # 원본 이미지 크기로 검은색 마스크 이미지 생성
-            mask_img = Image.new("RGB", img.size, "black")
-            mask_draw = ImageDraw.Draw(mask_img)
-
-            # 각 박스 위치에 하얀색 사각형 그리기
-            mp = 2
-            width, height = mask_img.size
-            for box in boxes:
-                x1, y1, w, h, _, _, _ = box
-                x2 = x1 + w
-                y2 = y1 + h
-                x1 = max(x1 - mp, 0)
-                y1 = max(y1 - mp, 0)
-                x2 = min(x2 + mp, width)
-                y2 = min(y2 + mp, height)
-                expanded_bbox = expand_bbox(mask_img, (x1, y1, x2, y2))
-                # expanded_bbox = (x1,y1,x2,y2)
-                mask_draw.rectangle(expanded_bbox, fill="white")
-
-            # 마스크 이미지 저장
-            # file_name = os.path.basename(input_image)
-            # base_name = os.path.splitext(file_name)[0]
-
-            # img.save(os.path.join(predict_config.ocr_outdir, f"{base_name}.png"))
-            # mask_img.save(
-            #     os.path.join(predict_config.ocr_outdir, f"{base_name}_mask.png")
-            # )
-
-            lama_model = load_model("lama", "cuda")
-
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            byte_im = buf.getvalue()
-
-            img, alpha_channel, exif_infos = load_img(byte_im, return_exif=True)
-
-            buf.flush()
-            buf.seek(0)
-            mask_img.save(buf, format="PNG")
-            byte_mask = buf.getvalue()
-
-            mask_img, _ = load_img(byte_mask, gray=True)
-
-            mask_img = cv2.threshold(mask_img, 127, 255, cv2.THRESH_BINARY)[1]
-
-            config.sd_seed = random.randint(1, 999999999)
-            config.paint_by_example_seed = random.randint(1, 999999999)
-
-            interpolation = cv2.INTER_CUBIC
-            size_limit = max(img.shape)
-
-            img = resize_max_size(
-                img, size_limit=size_limit, interpolation=interpolation
-            )
-            mask_img = resize_max_size(
-                mask_img, size_limit=size_limit, interpolation=interpolation
-            )
-
-            inpainted_result = lama_model(img, mask_img, config)
-            inpainted_result = cv2.cvtColor(
-                inpainted_result.astype(np.uint8), cv2.COLOR_BGR2RGB
-            )
-            if alpha_channel is not None:
-                if alpha_channel.shape[:2] != inpainted_result.shape[:2]:
-                    alpha_channel = cv2.resize(
-                        alpha_channel,
-                        dsize=(inpainted_result.shape[1], inpainted_result.shape[0]),
-                    )
-                inpainted_result = np.concatenate(
-                    (inpainted_result, alpha_channel[:, :, np.newaxis]), axis=-1
+        if NUMBER_OF_PROCESSES < 1:
+            NUMBER_OF_PROCESSES = 1
+        with Pool(processes=NUMBER_OF_PROCESSES) as pool:
+            list(
+                tqdm.tqdm(
+                    pool.imap(process_image_wrapper, args_list), total=len(args_list)
                 )
-            inpainted_result = Image.fromarray(inpainted_result)
-
-            ocr_result = []
-            boxes = cluster_boxes_by_text_height(boxes, 40)
-            boxes = cluster_boxes_by_text_y(boxes, 10)
-            boxes = align_text_boxes(boxes, input_image)
-            for box in boxes:
-                ocr_result.append([box])
-
-            final_result = []
-
-            for sub_result in ocr_result:
-                x1 = sub_result[0][0]
-                y1 = sub_result[0][1]
-                x2 = sub_result[-1][0] + sub_result[-1][2]
-                y2 = sub_result[-1][1] + sub_result[-1][3]
-
-                w, h = x2 - x1, y2 - y1
-
-                text = ""
-
-                for r in sub_result:
-                    text += r[4] + " "
-
-                text = text.strip()
-
-                final_result.append([x1, y1, w, h, text])
-
-            original_texts = [item[4] for item in final_result]
-            original_texts_string = json.dumps(
-                [item[4].replace("，", "").strip() for item in final_result],
-                ensure_ascii=False,
             )
-
-            completion = translate_llm(
-                len(original_texts), original_texts_string, predict_config.lang
-            )
-
-            result = json.loads(completion.choices[0].message.content)
-            translated = next(iter(result.values()))
-
-            if len(original_texts) != len(translated):
-                print("ERROR : length error")
-                continue
-
-            for i, r in enumerate(final_result):
-                final_result[i].append(translated[i].upper())
-
-            translated_result = inpainted_result.copy()
-            draw = ImageDraw.Draw(translated_result)
-
-            for r in final_result:
-                x1, y1, w, h, text_ko, translated_text = r
-                border_color = extract_border_colors(input_image, (x1, y1, w, h))
-                bbox_colors = extract_bbox_colors(input_image, (x1, y1, w, h))
-                font_color = find_most_different_color(border_color, bbox_colors)
-                r.append(font_color)
-                
-            final_result = cluster_colors(final_result, 0.3)
-
-            for r in final_result:
-                x1, y1, w, h, original_text, translated_text, font_color = r
-                wrapped_text = [translated_text]
-
-                font_size = 17
-                font_ = ImageFont.truetype(font, font_size)
-                ascent, descent = font_.getmetrics()
-                (width, height), (offset_x, offset_y) = font_.font.getsize(
-                    translated_text
-                )
-
-                while width < w and (ascent - offset_y) < h:
-                    font_size += 1
-                    font_ = ImageFont.truetype(font, font_size)
-                    ascent, descent = font_.getmetrics()
-                    (width, height), (offset_x, offset_y) = font_.font.getsize(
-                        translated_text
-                    )
-                font_size -= 1
-                font_ = ImageFont.truetype(font, font_size)
-                line_height = font_.getsize("hg")[1] * 1.5
-
-                # 각 텍스트 줄에 대해
-                for line in wrapped_text:
-                    # 텍스트 줄의 너비 계산
-                    text_width, _ = font_.getsize(line)
-
-                    text_x = x1 + (w - text_width) / 2
-                    if text_x <= 0:
-                        text_x = 0
-                    text_position = (text_x, y1)
-
-                    draw.text(
-                        text_position,
-                        line,
-                        fill=font_color,
-                        font=font_
-                    )
-                    y1 += line_height
-
-            cur_outdir = os.path.join(predict_config.outdir, key)
-            if not os.path.exists(cur_outdir):
-                os.makedirs(cur_outdir)
-
-            file_name = os.path.basename(input_image)
-            base_name = os.path.splitext(file_name)[0]
-            inpainted_result.save(
-                os.path.join(cur_outdir, f"{base_name}_inpainted.png")
-            )
-            translated_result.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
+            pool.close()
+            pool.join()
 
 
 @hydra.main(config_path="./config", config_name="ocr.yaml")
 def main(predict_config: OmegaConf):
+    start = time.time()
     image_translate(predict_config)
+    end = time.time()
+    elapsed_time = end - start
+    print(f"함수 실행 시간: {elapsed_time:.2f}초")
 
 
 if __name__ == "__main__":
