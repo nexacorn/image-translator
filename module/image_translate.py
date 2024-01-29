@@ -43,6 +43,8 @@ logging.getLogger("httpx").setLevel(logging.CRITICAL)
 openai_api_key = os.getenv("OPENAI_API_KEY")
 ocr_lang = "ch"
 image_extensions = ["png", "jpg", "jpeg", "bmp", "gif"]
+global_lama = None
+global_ocr = None
 
 model: ModelManager = None
 
@@ -84,6 +86,8 @@ config = Config(
     # controlnet_method=form["controlnet_method"],
 )
 
+def upload_image_url(image):
+    return 'new_image_url'
 
 def load_model(name, device):
     model = ModelManager(name=name, device=device)
@@ -412,23 +416,16 @@ def find_most_different_color(border_color, bbox_colors):
     return tuple(most_different_color.astype(int))
 
 
-def process_image(input_image, predict_config, key, ocr_lang, model, ocr):
+def process_image(input_image, font, to_lang, model, ocr):
     img = Image.open(input_image)
     img_path = input_image
 
     result = ocr.ocr(img_path, cls=False)
 
-    if not result or result == [None]:
-        cur_outdir = os.path.join(predict_config.outdir, key)
-        if not os.path.exists(cur_outdir):
-            os.makedirs(cur_outdir)
+    if not result or result == [None]:    
+        return upload_image_url(img)
 
-        file_name = os.path.basename(input_image)
-        base_name = os.path.splitext(file_name)[0]
-        img.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
-        return
-
-    font = predict_config.font
+    font = font
 
     boxes = [line[0] for line in result[0]]
 
@@ -457,14 +454,7 @@ def process_image(input_image, predict_config, key, ocr_lang, model, ocr):
             boxes.append([int(x1), int(y1), int(w), int(h), text, conf, i])
 
     if not boxes or len(boxes) < 1:
-        cur_outdir = os.path.join(predict_config.outdir, key)
-        if not os.path.exists(cur_outdir):
-            os.makedirs(cur_outdir)
-
-        file_name = os.path.basename(input_image)
-        base_name = os.path.splitext(file_name)[0]
-        img.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
-        return
+        return upload_image_url(img)
 
     # 원본 이미지 크기로 검은색 마스크 이미지 생성
     mask_img = Image.new("RGB", img.size, "black")
@@ -538,7 +528,7 @@ def process_image(input_image, predict_config, key, ocr_lang, model, ocr):
     inpainted_result = Image.fromarray(inpainted_result)
 
     ocr_result = []
-    print(boxes)
+    # print(boxes)
     boxes = cluster_boxes_by_text_height(boxes, 40)
     boxes = cluster_boxes_by_text_y(boxes, 10)
     boxes = align_text_boxes(boxes, input_image)
@@ -571,7 +561,7 @@ def process_image(input_image, predict_config, key, ocr_lang, model, ocr):
     )
 
     completion = translate_llm(
-        len(original_texts), original_texts_string, predict_config.lang
+        len(original_texts), original_texts_string, to_lang
     )
 
     result = json.loads(completion.choices[0].message.content)
@@ -627,21 +617,24 @@ def process_image(input_image, predict_config, key, ocr_lang, model, ocr):
             draw.text(text_position, line, fill=font_color, font=font_)
             y1 += line_height
 
-    cur_outdir = os.path.join(predict_config.outdir, key)
-    if not os.path.exists(cur_outdir):
-        os.makedirs(cur_outdir)
+    # cur_outdir = os.path.join(predict_config.outdir, key)
+    # if not os.path.exists(cur_outdir):
+        # os.makedirs(cur_outdir)
 
-    file_name = os.path.basename(input_image)
-    base_name = os.path.splitext(file_name)[0]
-    inpainted_result.save(os.path.join(cur_outdir, f"{base_name}_inpainted.png"))
-    translated_result.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
+    # file_name = os.path.basename(input_image)
+    # base_name = os.path.splitext(file_name)[0]
+    # inpainted_result.save(os.path.join(cur_outdir, f"{base_name}_inpainted.png"))
+    # translated_result.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
+    return upload_image_url(img)
 
 
 # 모델 로딩 및 초기화 함수
 def load_models():
-    model = load_model("lama", "cuda")
-    ocr = PaddleOCR(lang=ocr_lang, show_log=False, use_gpu=True, ocr_version="PP-OCRv3")
-    return model, ocr
+    global global_lama, global_ocr
+    if global_lama is None or global_ocr is None:
+        global_lama = load_model("lama", "cuda")
+        global_ocr = PaddleOCR(lang=ocr_lang, show_log=False, use_gpu=True, ocr_version="PP-OCRv3")
+    return global_lama, global_ocr
 
 
 # 이미지 처리 함수
@@ -653,33 +646,16 @@ def process_image_wrapper(args):
 
 def image_translate(predict_config):
     key_folders = [f.path for f in os.scandir(predict_config.indir) if f.is_dir()]
-
+    load_models() # 모델을 전역적으로 로드
     for key_folder in key_folders:
         key = os.path.basename(key_folder)
         images = []
         for ext in image_extensions:
             images.extend(glob.glob(os.path.join(key_folder, f"*.{ext}")))
 
-        # 멀티프로세싱을 위한 인자 리스트 생성
-        args_list = [
-            (input_image, predict_config, key, ocr_lang) for input_image in images
-        ]
+        for input_image in tqdm.tqdm(images, desc="Processing Images"):
+            process_image_wrapper((input_image, predict_config, key, ocr_lang))
 
-        # 멀티프로세싱 풀 생성 및 실행
-        cpu_count = os.cpu_count()
-
-        NUMBER_OF_PROCESSES = predict_config.cpu_cores
-
-        if NUMBER_OF_PROCESSES < 1:
-            NUMBER_OF_PROCESSES = 1
-        with Pool(processes=NUMBER_OF_PROCESSES) as pool:
-            list(
-                tqdm.tqdm(
-                    pool.imap(process_image_wrapper, args_list), total=len(args_list)
-                )
-            )
-            pool.close()
-            pool.join()
 
 
 @hydra.main(config_path="./config", config_name="ocr.yaml")
