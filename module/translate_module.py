@@ -31,9 +31,7 @@ from lama_cleaner.helper import (
 LOGGER = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.CRITICAL)
 
-openai_api_key = os.getenv("OPENAI_API_KEY")
 ocr_lang = "ch"
-image_extensions = ["png", "jpg", "jpeg", "bmp", "gif"]
 global_lama = None
 global_ocr = None
 
@@ -79,25 +77,39 @@ config = Config(
     # controlnet_method=form["controlnet_method"],
 )
 
-def upload_image_url(image, file_name, celery_task_id):
+def to_png(jpg_image):
+    # BytesIO 객체를 사용하여 메모리 내에서 이미지를 처리합니다.
+    png_image_io = io.BytesIO()
+    
+    # 이미지를 PNG 형식으로 BytesIO 객체에 저장합니다.
+    jpg_image.save(png_image_io, format='PNG')
+    
+    # BytesIO 객체에서 PNG 형식의 이미지를 읽어 Image 객체로 변환합니다.
+    png_image_io.seek(0)
+    png_image = Image.open(png_image_io)
+
+    return png_image
+
+def upload_image_url(image, file_name):
     bucket_name = 'okit'
     region_name = s3.meta.region_name  # AWS 리전 이름
     
     in_mem_file = io.BytesIO()
-    image.save(in_mem_file, format=image.format)
+    image.save(in_mem_file, format='PNG')
     in_mem_file.seek(0)
     
-    s3.upload_fileobj(
+    upload_response = s3.upload_fileobj(
         in_mem_file,
         bucket_name,
-        file_name, 
+        'translated_'+file_name, 
         ExtraArgs={
-            'ACL': 'public-read',
-            'ContentType': 'image/jpeg'  # 이미지 형식에 맞게 변경
+            'ContentType': 'image/png'  # 이미지 형식에 맞게 변경
         }
     )
 
-    image_url = f"https://{bucket_name}.s3.{region_name}.amazonaws.com/{celery_task_id}/translated_{file_name}"
+    print(upload_response)
+    
+    image_url = f"https://{bucket_name}.s3.{region_name}.amazonaws.com/translated_{file_name}"
     
     return image_url
 
@@ -280,7 +292,7 @@ def cluster_colors(data, eps):
 
 
 def align_text_boxes(boxes, input_image, center_eps=80, x_eps=20):
-    image = Image.open(input_image)
+    image = input_image
     draw = ImageDraw.Draw(image, "RGBA")
 
     # 1단계: 센터 좌표 계산
@@ -331,7 +343,7 @@ def contains_english(s):
     return bool(re.fullmatch("[a-zA-Z0-9\s!@#$%^&*()_+\-=[\]{ };'\":,.<>/?\\|￥]+", s))
 
 
-def translate_llm(original_text_len, orginal_text, lang="ko"):
+def translate_llm(original_text_len, orginal_text,openai_api_key, lang="ko"):
     client = OpenAI(api_key=openai_api_key)
     if "ko" in lang:
         completion = client.chat.completions.create(
@@ -377,9 +389,9 @@ def adjust_bbox(image_shape, bbox):
     return x1, y1, x2, y2
 
 
-def extract_border_colors(image_path, bbox, expansion=1, n_clusters=1):
+def extract_border_colors(input_image, bbox, expansion=1, n_clusters=1):
     # 이미지 로드
-    image = Image.open(image_path)
+    image = input_image
     image = np.array(image)
 
     x1, y1, x2, y2 = adjust_bbox(image.shape, bbox)
@@ -400,9 +412,9 @@ def extract_border_colors(image_path, bbox, expansion=1, n_clusters=1):
     return kmeans.cluster_centers_
 
 
-def extract_bbox_colors(image_path, bbox, n_clusters=2):
+def extract_bbox_colors(input_image, bbox, n_clusters=2):
     # 이미지 로드
-    image = Image.open(image_path)
+    image = input_image
     image = np.array(image)
 
     x1, y1, x2, y2 = adjust_bbox(image.shape, bbox)
@@ -429,13 +441,18 @@ def find_most_different_color(border_color, bbox_colors):
     return tuple(most_different_color.astype(int))
 
 
-def process_image(input_image, font, to_lang, model, ocr, file_name, celery_task_id):
+def process_image(input_image, font, to_lang, model, ocr, file_name, openai_api_key):
     img = input_image
+    
+    img_format = img.format
+
+    if img_format != 'PNG':
+        img = to_png(img)
 
     result = ocr.ocr(np.asarray(img), cls=False)
-
+    
     if not result or result == [None]:    
-        return upload_image_url(img, file_name, celery_task_id)
+        return upload_image_url(img, file_name)
 
     font = font
 
@@ -466,7 +483,7 @@ def process_image(input_image, font, to_lang, model, ocr, file_name, celery_task
             boxes.append([int(x1), int(y1), int(w), int(h), text, conf, i])
 
     if not boxes or len(boxes) < 1:
-        return upload_image_url(img, file_name, celery_task_id)
+        return upload_image_url(img, file_name)
 
     # 원본 이미지 크기로 검은색 마스크 이미지 생성
     mask_img = Image.new("RGB", img.size, "black")
@@ -573,7 +590,7 @@ def process_image(input_image, font, to_lang, model, ocr, file_name, celery_task
     )
 
     completion = translate_llm(
-        len(original_texts), original_texts_string, to_lang
+        len(original_texts), original_texts_string,openai_api_key, to_lang
     )
 
     result = json.loads(completion.choices[0].message.content)
@@ -637,4 +654,7 @@ def process_image(input_image, font, to_lang, model, ocr, file_name, celery_task
     # base_name = os.path.splitext(file_name)[0]
     # inpainted_result.save(os.path.join(cur_outdir, f"{base_name}_inpainted.png"))
     # translated_result.save(os.path.join(cur_outdir, f"{base_name}_result.jpg"))
-    return upload_image_url(img, file_name, celery_task_id)
+    if not isinstance(img, Image.Image):
+        return Image.fromarray(np.uint8(img))
+
+    return upload_image_url(img, file_name)
