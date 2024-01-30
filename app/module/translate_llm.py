@@ -1,11 +1,12 @@
 from openai import OpenAI
 import re
 
+
 def contains_english(s):
     return bool(re.fullmatch("[a-zA-Z0-9\s!@#$%^&*()_+\-=[\]{ };'\":,.<>/?\\|￥]+", s))
 
 
-def translate_llm(original_text_len, orginal_text,openai_api_key, lang="ko"):
+def translate_llm(original_text_len, orginal_text, openai_api_key, lang="ko"):
     client = OpenAI(api_key=openai_api_key)
     if "ko" in lang:
         completion = client.chat.completions.create(

@@ -3,6 +3,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sklearn.cluster import DBSCAN, KMeans
 from app.module.utils import calculate_center, color_similarity, adjust_bbox
 
+
 def cluster_boxes_by_text_height(boxes, eps):
     # Extract text heights
     text_heights = np.array([box[3] for box in boxes]).reshape(-1, 1)
@@ -55,6 +56,7 @@ def cluster_boxes_by_text_y(boxes, eps):
 
     return boxes
 
+
 def cluster_colors(data, eps):
     # 입력 데이터에서 font_color를 추출
     colors = [item[6] for item in data]
@@ -89,6 +91,7 @@ def cluster_colors(data, eps):
         item[6] = dominant_colors[labels[i]]
 
     return data
+
 
 def align_text_boxes(boxes, input_image, center_eps=80, x_eps=20):
     image = input_image
@@ -136,14 +139,26 @@ def align_text_boxes(boxes, input_image, center_eps=80, x_eps=20):
             )
     return new_boxes
 
+
 def extract_border_colors(input_image, bbox, expansion=1, n_clusters=1):
     # 이미지 로드
     image = input_image
     image = np.array(image)
 
     x1, y1, x2, y2 = adjust_bbox(image.shape, bbox)
-    x1, y1, x2, y2 = x1 - expansion, y1 - expansion, x2 + expansion, y2 + expansion
-    x1, y1, x2, y2 = adjust_bbox(image.shape, (x1, y1, x2 - x1, y2 - y1))
+    x1, y1, x2, y2 = (
+        max(x1 - expansion, 0),
+        max(y1 - expansion, 0),
+        min(x2 + expansion, image.shape[1]),
+        min(y2 + expansion, image.shape[0]),
+    )
+
+    # 경계선 색상 추출을 위한 인덱스 조정
+    if x2 >= image.shape[1]:
+        x2 = image.shape[1] - 1
+
+    if y2 >= image.shape[0]:
+        y2 = image.shape[0] - 1
 
     # 경계선 색상 추출
     top_border = image[y1, x1 : x2 + 1]
