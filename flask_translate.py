@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from module.translate_module import process_image, upload_image_url
+from app.translate_module import process_image, upload_image_url
 import requests
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
@@ -35,8 +35,7 @@ model, ocr = load_models()
 @app.route('/process-images', methods=['POST'])
 def process_images():
     image_urls = request.json.get('urls', [])
-    print("image urls : ", image_urls)
-    
+
     processed_urls = []
     openai_api_key = os.getenv('OPENAI_KEY')
     
@@ -55,10 +54,8 @@ def process_images():
         
         font = './font/NanumGothicBold.ttf'
         to_lang = 'ko'
-            
-        processed_image = process_image(image, font, to_lang, model, ocr, file_name, openai_api_key)
-        print(processed_image)
-        processed_url = upload_image_url(processed_image, file_name)
+        
+        processed_url = process_image(image, font, to_lang, model, ocr, file_name, openai_api_key)
         
         processed_urls.append(processed_url)
     
