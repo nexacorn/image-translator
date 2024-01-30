@@ -34,3 +34,4 @@ pyyaml
 scikit-learn
 chardet
 lama-cleaner
+celery
