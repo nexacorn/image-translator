@@ -68,7 +68,7 @@ def process_images():
             image = Image.open(image_data)
         else:
             print(f"Failed to retrieve image. Status code: {response.status_code}")
-            return
+            return ['']
 
         try:
             processed_url = process_image(
