@@ -7,7 +7,7 @@ from torch.utils.data._utils.collate import default_collate
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import random
-import boto3
+
 
 from lama_cleaner.model_manager import ModelManager
 from lama_cleaner.schema import Config, HDStrategy
@@ -30,7 +30,6 @@ global_ocr = None
 
 model: ModelManager = None
 
-s3 = boto3.client('s3')
 
 config = Config(
     ldm_steps=25,
