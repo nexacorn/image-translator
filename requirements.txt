@@ -34,4 +34,5 @@ pyyaml
 scikit-learn
 chardet
 lama-cleaner
-celery
+python-dotenv
+openai
