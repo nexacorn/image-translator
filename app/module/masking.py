@@ -2,8 +2,8 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from app.module.utils import is_similar_color
 
-def expand_bbox(image, bbox, max_expand=5):
 
+def expand_bbox(image, bbox, max_expand=5):
     if isinstance(image, Image.Image):
         image = np.array(image)
 
