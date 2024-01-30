@@ -9,10 +9,12 @@ from urllib.parse import urlparse, unquote
 from dotenv import load_dotenv
 import os
 import time
+from flask_cors import CORS
 
 load_dotenv()
 
 app = Flask(__name__)  # Flask 애플리케이션 인스턴스 생성
+CORS(app)
 
 global_lama = None
 global_ocr = None
@@ -60,16 +62,20 @@ def process_images():
 
     for url in image_urls:
         file_name = extract_filename_from_url(url)
-
-        response = requests.get(url)
+        
+        headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'accept' : "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7", 'Referer': 'https://vvic.com'}
+        response = requests.get(url, headers=headers)
+        print(response)
 
         if response.status_code == 200:
             image_data = BytesIO(response.content)
             image = Image.open(image_data)
         else:
             print(f"Failed to retrieve image. Status code: {response.status_code}")
-            return
-
+            return ['']
+        
+        processed_url = ''
+        
         try:
             processed_url = process_image(
                 image, font, to_lang, model, ocr, file_name, openai_api_key

@@ -35,3 +35,6 @@ scikit-learn
 chardet
 lama-cleaner
 celery
+boto3
+openai
+python-dotenv
