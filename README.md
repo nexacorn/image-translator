@@ -38,7 +38,11 @@ $ sh setting.sh
 **Run the flask server**
 
 ```
-$ python3 flask_translate.py
+# When using gpu
+$ python3 flask_translate.py --device=cuda
+
+# When using cpu
+$ python3 flask_translate.py --device=cpu
 ```
 
 **POST Request**
