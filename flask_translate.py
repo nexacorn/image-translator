@@ -8,7 +8,7 @@ from paddleocr import PaddleOCR
 from urllib.parse import urlparse, unquote
 from dotenv import load_dotenv
 import os
-import time
+import argparse
 
 load_dotenv()
 
@@ -19,12 +19,15 @@ global_ocr = None
 model: ModelManager = None
 
 
-def load_models():
+def load_models(device):
     global global_lama, global_ocr
     if global_lama is None or global_ocr is None:
-        global_lama = ModelManager(name="lama", device="cuda")
+        global_lama = ModelManager(name="lama", device=device)
         global_ocr = PaddleOCR(
-            lang="ch", show_log=False, use_gpu=True, ocr_version="PP-OCRv3"
+            lang="ch",
+            show_log=False,
+            use_gpu=False if device == "cpu" else True,
+            ocr_version="PP-OCRv3",
         )
     return global_lama, global_ocr
 
@@ -36,26 +39,23 @@ def extract_filename_from_url(url):
     return decoded_filename
 
 
-model, ocr = load_models()
-
-
 @app.route("/process-images", methods=["POST"])
 def process_images():
     image_urls = request.json.get("urls", [])
-    to_lang = request.json.get("language", '')
+    to_lang = request.json.get("language", "")
 
     processed_urls = []
     openai_api_key = os.getenv("OPENAI_KEY")
-    
-    font = ''
-    
+
+    font = ""
+
     if "vi" in to_lang.lower():
         to_lang = "vi"
         font = "./font/NotoSerifCJKsc-VF.ttf"
     elif "ko" in to_lang.lower():
         to_lang = "ko"
         font = "./font/NanumGothicBold.ttf"
-    else :
+    else:
         return "The language requested by the user is not supported"
 
     for url in image_urls:
@@ -68,7 +68,7 @@ def process_images():
             image = Image.open(image_data)
         else:
             print(f"Failed to retrieve image. Status code: {response.status_code}")
-            return ['']
+            return [""]
 
         try:
             processed_url = process_image(
@@ -82,5 +82,14 @@ def process_images():
     return processed_urls
 
 
-if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=8088, threaded=False)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--device", type=str, default="cpu", help='Device to use: "cuda" or "cpu"'
+    )
+    args = parser.parse_args()
+
+    # 모델을 로드할 때 명령줄 인자를 사용합니다.
+    model, ocr = load_models(args.device)
+
+    app.run(host="0.0.0.0", port=8088, threaded=False, debug=True)
