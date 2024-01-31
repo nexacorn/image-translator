@@ -43,9 +43,9 @@ $ python3 flask_translate.py
 
 **POST Request**
 
-```json
+```
 {
-	"urls" : ["image url 1", "image url 2", ...],
+	"urls" : ["image url 1", "image url 2"],
 	"language" : "vi or ko"
 }
 ```
@@ -66,20 +66,20 @@ curl --request POST \
 <table width="100%">
 <tr>
 	<td width=50%>
-		  <img src="https://okit.s3.ap-northeast-2.amazonaws.com/git_1.jpeg">
+		  <img src="https://github.com/nexacorn/image-translator/assets/65233803/9497954f-90dc-410d-a1bf-57c5939d881d">
 	</td>
 	<td width=50%>
-		  <img src="https://okit.s3.ap-northeast-2.amazonaws.com/git_1_result.png">
+		  <img src="https://github.com/nexacorn/image-translator/assets/65233803/5d0feb19-ddcb-4fa9-b173-5d31b393bf20">
 	</td>
 </tr>
 </table>
 <table width="100%">
 <tr>
 	<td width=50%>
-		  <img src="https://okit.s3.ap-northeast-2.amazonaws.com/image_3.jpg">
+		  <img src="https://github.com/nexacorn/image-translator/assets/65233803/26a7e0af-7ec4-4215-87aa-250a2415723d">
 	</td>
 	<td width=50%>
-		  <img src="https://okit.s3.ap-northeast-2.amazonaws.com/git_3_result.png">
+		  <img src="https://github.com/nexacorn/image-translator/assets/65233803/8b42b110-4661-4449-96fd-423340ee9d5a">
 	</td>
 </tr>
 </table>
@@ -89,26 +89,28 @@ curl --request POST \
 <table width="100%">
 <tr>
 	<td width=50%>
-		  <img src="https://okit.s3.ap-northeast-2.amazonaws.com/git_1.jpeg">
+		  <img src="https://github.com/nexacorn/image-translator/assets/65233803/9497954f-90dc-410d-a1bf-57c5939d881d">
 	</td>
 	<td width=50%>
-		  <img src="https://okit.s3.ap-northeast-2.amazonaws.com/ko_git_1.png">
+		  <img src="https://github.com/nexacorn/image-translator/assets/65233803/ac1dbfc3-31f8-4077-ab58-f3547026056b">
 	</td>
 </tr>
 </table>
 <table width="100%">
 <tr>
 	<td width=50%>
-		  <img src="https://okit.s3.ap-northeast-2.amazonaws.com/image_3.jpg">
+		  <img src="https://github.com/nexacorn/image-translator/assets/65233803/26a7e0af-7ec4-4215-87aa-250a2415723d">
 	</td>
 	<td width=50%>
-		  <img src="https://okit.s3.ap-northeast-2.amazonaws.com/ko_git_3.png">
+		  <img src="https://github.com/nexacorn/image-translator/assets/65233803/659f8cc1-768d-4d19-838c-1320d2d45412">
 	</td>
 </tr>
 </table>
 
 **Resources** 
+
 https://www.vvic.com/item/65116e755a2ea200083244c7
+
 https://www.vvic.com/item/65659fe0c6dec70008460df0
 
 # Contributing 🔥
