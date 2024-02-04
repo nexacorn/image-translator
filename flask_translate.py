@@ -61,7 +61,11 @@ def process_images():
     for url in image_urls:
         file_name = extract_filename_from_url(url)
 
-        response = requests.get(url)
+        response = requests.get(url, stream=True, headers={
+            "Content-Type": "application/json", 
+            "Accept": "application/json", 
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
+        })
 
         if response.status_code == 200:
             image_data = BytesIO(response.content)
@@ -92,4 +96,4 @@ if __name__ == "__main__":
     # 모델을 로드할 때 명령줄 인자를 사용합니다.
     model, ocr = load_models(args.device)
 
-    app.run(host="0.0.0.0", port=8088, threaded=False, debug=True)
+    app.run(host="0.0.0.0", port=8088, threaded=False, debug=False)
